@@ -1,0 +1,13 @@
+
+LISTENER_ORCL =
+  (ADDRESS = (PROTOCOL = TCP)(HOST = {{ FQDN }})(PORT = 1521))
+
+
+ORCL =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ FQDN }})(PORT = 1521))
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ oracle_domain_name }})
+    )
+  )

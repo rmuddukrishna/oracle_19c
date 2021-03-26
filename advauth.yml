@@ -1,0 +1,39 @@
+---
+- hosts: localhost
+  become: yes
+  roles:
+    - download_installers
+
+- hosts: oracle_servers
+  become: yes
+  roles:
+    - disable_firewalld
+    - oracle_19c_server
+
+- hosts: client_servers
+  become: yes
+  roles:
+    - disable_firewalld
+    - java_8
+    - tomcat
+    - strong_auth
+    - risk_auth
+    - ca_adapter
+
+- hosts: localhost
+  become: yes
+  roles:
+    - disable_firewalld
+    - oracle_client
+    
+- hosts: client_servers
+  become: yes
+  roles:
+    - bootstrap
+    
+- hosts: localhost
+  gather_facts: no
+  become: yes
+  roles:
+    - email_report
+    

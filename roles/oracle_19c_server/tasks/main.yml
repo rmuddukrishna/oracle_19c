@@ -1,0 +1,235 @@
+---
+  - name: check task runs only on redhat family
+    assert:
+      that:
+        - "ansible_userspace_bits == '64'"
+        - "ansible_os_family == 'RedHat'"
+        
+  - name: Check subsciption manager enabled
+    command: subscription-manager list
+    register: subs_output
+    
+  - name: Disable beta RHSM repositories
+    rhsm_repository:
+      name: rhel-7-server-rt-beta-rpms
+      state: disabled
+    when: "'Subscribed' in subs_output.stdout"
+    
+  - name: copy installers to oracle db server
+    copy:
+      src: /tmp/{{ item }}
+      dest: "{{ tmp_dir }}"
+      mode: 0777
+    when: "'Subscribed' in subs_output.stdout"
+    with_items:
+    - compat-libstdc++-33-3.2.3-72.el7.x86_64.rpm
+    - compat-libcap1-1.10-7.el7.x86_64.rpm
+    - oracle-database-preinstall-19c-1.0-1.el7.x86_64.rpm
+
+  - name: Install required pre-requisite packages
+    yum: 
+      name: "{{ packages }}" 
+      state: installed
+    when: "'Subscribed' in subs_output.stdout"
+    ignore_errors: yes
+    tags:
+      - oracle_prereq_packages
+
+  - name: Install oracle-prerequsite and compat rpm packges
+    yum:
+      name: "{{ tmp_dir }}/{{ item }}"
+      state: present
+    when: "'Subscribed' in subs_output.stdout"
+    with_items:
+      - compat-libstdc++-33-3.2.3-72.el7.x86_64.rpm
+      - compat-libcap1-1.10-7.el7.x86_64.rpm
+      - oracle-database-preinstall-19c-1.0-1.el7.x86_64.rpm
+
+  - name: copy rpm installers
+    copy:
+      src: /tmp/{{ item }}
+      dest: "{{ tmp_dir }}"
+      mode: 0777
+    when: "'Unknown' in subs_output.stdout"
+    with_items: "{{ preq_packages }}"
+
+  - name: downgrade glibc
+    shell: yum downgrade glibc glibc-common glibc-devel glibc-headers -y
+    when: "'Unknown' in subs_output.stdout"
+    ignore_errors: yes
+
+  - name: Install all dependency rpm packges
+    yum:
+      name: "{{ tmp_dir }}/{{ item }}"
+      state: present
+    when: "'Unknown' in subs_output.stdout"
+    with_items: "{{ preq_packages }}"
+    tags:
+      - oracle_prereq_rpm_packages
+
+  - name: Remove the user 'oracle'
+    user:
+      name: "{{ oracle_user }}"
+      state: absent
+      remove: yes
+    tags:
+      - remove_oracle_user
+
+  - name: Create the oracle user
+    shell: 
+      cmd: "useradd -p $(openssl passwd -1 {{ common_password }}) {{ oracle_user }}"
+      creates: "/home/{{ oracle_user }}"
+    tags:
+      - create_oracle_user
+
+  - name: Add the oracle user to dba and oper groups
+    shell: 
+      cmd: "usermod {{ oracle_user }} -aG {{ item }} -g {{ oracle_group }}"
+    with_items:
+      - dba
+      - oper
+    tags:
+      - groupadd_oracle_user
+
+  - name: Ensure oracle user is explicitly allowed to sudo with no password
+    lineinfile:
+      dest: /etc/sudoers
+      state: present
+      line: '{{ oracle_user }} ALL=(ALL) NOPASSWD: ALL'
+      validate: 'visudo -cf %s'
+    tags:
+      - oracle_sudoers
+
+  - name: create required directories
+    file:
+      path: "{{ item }}"
+      state: directory
+      owner: "{{ oracle_user }}"
+      group: "{{ oracle_group }}"
+      mode: "0777"
+    with_items:
+      - "{{ root_directory }}"
+      - "{{ scripts_directory }}"
+      - "{{ oracle_inventory }}"
+      - "{{ oracle_base }}"
+      - "{{ oracle_db_home }}"
+    tags:
+      - oracle_required_directories
+
+  - name: Extract the oracle 19c installation materials
+    unarchive: 
+      src: "{{ oracle_19c_src_file_path }}"
+      dest: "{{ oracle_db_home }}"
+      owner: "{{ oracle_user }}"
+      group: "{{ oracle_group }}"
+      mode: "0777"
+    tags:
+      - oracle_unzip_db_install
+  
+  - name: Copy the unattended installer response file
+    template:
+      src: "db_install.rsp.j2"
+      dest: "{{ oracle_db_home }}/db_install.rsp"
+      owner: "{{ oracle_user }}"
+      group: "{{ oracle_group }}"
+      mode: "0777"
+    tags:
+      - oracle_db_install_rsp
+  
+  - name: Install oracle 19c db software
+    command: "{{ oracle_db_home }}/runInstaller -silent -responseFile {{ oracle_db_home }}/db_install.rsp -noconfig -ignorePrereqFailure"
+    become_user: "{{ oracle_user }}"
+    register: oracle_install
+    failed_when: "'Successfully Setup Software' not in oracle_install.stdout"
+    tags:
+      - oracle_db_install
+
+  - name: Run orainstRoot.sh from root user
+    command: "{{ oracle_inventory }}/orainstRoot.sh"
+    register: orainst
+    failed_when: "'The execution of the script is complete' not in orainst.stdout"
+    tags:
+      - run_orainstRoot_sh
+
+  - name: Run root.sh from root user
+    command: "{{ oracle_db_home }}/root.sh"
+    tags:
+      - run_root_sh
+  
+  # Create a blank file
+  - name: Create a new file {{ profile_path }}/oracle_home.sh
+    file: path={{ profile_path }} state=touch
+
+  # Copy /etc/profile.d/oracle_home.sh with content
+  - copy:
+      content: |
+                #!/bin/sh
+                ORACLE_SID="{{ oracle_db_name }}"
+                export ORACLE_SID
+                ORACLE_HOME="{{ oracle_db_home }}"
+                export ORACLE_HOME
+                PATH=$ORACLE_HOME/bin:$PATH
+                export PATH
+      dest: "{{ profile_path }}/oracle_home.sh"
+      force: no
+
+  # Fix the executable permission
+  - name: Set executable permission
+    file: 
+      path: "{{ profile_path }}/oracle_home.sh"
+      mode: '0777'
+      state: file 
+      recurse: no
+
+  # Export the env on th fly to make system wide change
+  - name: Source the file {{ profile_path }}/oracle_home.sh
+    shell: source {{ profile_path }}/oracle_home.sh
+    become: yes
+
+  - name: Copy the unattended dbca response file
+    template:
+      src: "dbca.rsp.j2"
+      dest: "{{ oracle_db_home }}/bin/dbca.rsp"
+      owner: "{{ oracle_user }}"
+      group: "{{ oracle_group }}"
+      mode: "0777"
+    tags:
+      - oracle_dbca_rsp
+
+  - name: Create orcl database
+    command: "{{ oracle_db_home }}/bin/dbca -silent -createDatabase -responseFile {{ oracle_db_home }}/bin/dbca.rsp"
+    become_user: "{{ oracle_user }}"
+    register: create_orcl
+    failed_when: "'Database creation complete' not in create_orcl.stdout"
+    tags:
+      - create_orcl_db
+
+  - name: Copy the tnsnames.ora file in network/admin
+    template:
+      src: "tnsnames.ora.j2"
+      dest: "{{ oracle_db_home }}/network/admin/tnsnames.ora"
+      owner: "{{ oracle_user }}"
+      group: "{{ oracle_group }}"
+      mode: "0777"
+    tags:
+      - oracle_tnsnames_ora
+
+  - name: lsnrctl stop
+    command: /bin/sh -l -c "lsnrctl stop"
+    become_user: "{{ oracle_user }}"
+    ignore_errors: yes
+
+  - name: lsnrctl start
+    command: /bin/sh -l -c "lsnrctl start"
+    become_user: "{{ oracle_user }}"
+
+  - name: wait for 75 seconds and continue with play
+    wait_for:
+      timeout: 60
+    delegate_to: localhost
+
+  - name: lsnrctl status
+    command: /bin/sh -l -c "lsnrctl status"
+    become_user: "{{ oracle_user }}"
+    register: orcl_start
+    failed_when: "'Instance \"orcl\", status READY' not in orcl_start.stdout"

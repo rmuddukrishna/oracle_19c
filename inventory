@@ -1,0 +1,6 @@
+[client_servers]
+3107-advauth-001.dhcp.broadcom.net
+3107-advauth-002.dhcp.broadcom.net
+
+[oracle_servers]
+3107db-001.dhcp.broadcom.net

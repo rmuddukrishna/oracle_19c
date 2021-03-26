@@ -1,0 +1,43 @@
+---
+
+  # Here the users are defined as "smuser" for Policy server, "dsa" for CA-Directory, "aguser" for Access Gateway and "wauser" for Webagent
+  # If we need different users, we need to define them as variables (which are currently not defined)
+
+  local_installer_path: /tmp
+
+# JAVA Variables 
+  java_installer_path: /tmp
+  java_home: "{{ java_installation_path }}/{{ jdk_version }}"
+  java_tar_file_path: /tmp/jdk-8u241-linux-x64.tar 
+  jdk_version: jdk1.8.0_241
+  java_installation_path: /opt
+
+
+  domain: dhcp.broadcom.net
+  dot: .
+  # FQDN: "{{ inventory_hostname + dot + domain }}"
+  FQDN: "{{ inventory_hostname }}"
+
+  # selenium
+  geck_path: /tmp
+
+# Oracle DB
+  dba_group: dba
+  oper_group: oper
+  root_directory: /u01
+  scripts_directory: "{{ root_directory }}/app/scripts"
+  oracle_base: /u01/app/oracle
+  oracle_db_home: /u01/app/oracle/product/19.3/dbhome_1
+  oracle_inventory: /u01/app/oraInventory
+  tmp_dir: /tmp
+  oracle_19c_src_file_path: "{{ tmp_dir }}/LINUX.X64_193000_db_home.zip"
+  oracle_domain_name: orcl.{{ domain }}
+  oracle_db_name: orcl
+  oracle_user: oracle
+  oracle_group: oinstall
+  oracle_home: /u01/app/oracle/product/19.3/client_home
+  arcot_dsn: arcotdsn
+  sys_user: sys
+  sys_user_password: "{{ oracle_db_password }}"
+  oracle_db_hostname: "{{ groups['oracle_servers'][0] }}"
+  sql_files_dir_path: /tmp/sql_files_dir
